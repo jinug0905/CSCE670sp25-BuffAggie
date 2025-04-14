@@ -46,11 +46,7 @@ intent_prompt = ChatPromptTemplate.from_messages([
 intent_classifier = intent_prompt | llm.with_structured_output(Intent)
 
 def transform_query(state):
-    """Modify non-workout queries into contextually appropriate workout-related queries.
-    These queries must be concise, maximum of 10 words and use opposite body part keywords and not include the names of the body parts the user wants to avoid
-    Examples: If Given 'I injured my arms, give me exercises', return 'Give me Quadriceps, Abdominals, Hamstrings, or Calves exercises.'
-    Examples: If Given 'Give me alternates to lower body', return 'Give me Quadriceps, Shoulders, Lats, Biceps, Forearms, or other upper body exercises.'
-    """
+    """Modify non-workout queries into contextually appropriate workout-related queries."""
     print("Transforming Node called")
     query = state["query"]
     intent = intent_classifier.invoke({"query": query}).intent
