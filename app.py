@@ -151,7 +151,7 @@ workflow.add_edge("recommend_workouts", END)
 init_db()
 
 st.set_page_config(page_title="Exercise Recommender", layout="centered")
-st.title("🏋️ Exercise Recommender for Aggies")
+st.title("Exercise Recommender for Aggies")
 
 df, model = load_model_and_data()
 
@@ -196,7 +196,7 @@ with save_col:
             add_or_update_user(username_widget, gender_widget, major_widget, prefs_widget)
             st.sidebar.success(f"Profile for '{username_widget}' saved or updated!")
 
-st.subheader("🔍 Get Exercise Recommendations")
+# st.subheader("🔍 Get Exercise Recommendations")
 query = st.text_input("💬 Describe your workout goal (e.g., 'build upper body strength'):")
 
 if st.button("Recommend Exercises"):
