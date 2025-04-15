@@ -206,7 +206,7 @@ if st.button("Recommend Exercises"):
         st.warning("Please enter a workout goal.")
     else:
         user_pref = get_user_preferences(st.session_state['username'])
-        full_query = f"{user_pref} {query}" if user_pref else query
+        full_query = query if "only" in query.lower() else f"{user_pref} {query}" if user_pref else query
 
         state = {"query": full_query, "df": df, "model": model}
         result_state = workflow.compile().invoke(state)
