@@ -26,13 +26,15 @@ def init_db():
             username TEXT UNIQUE,
             gender TEXT,
             major TEXT,
-            preferences TEXT
+            preferences TEXT, 
+            gym TEXT
         )
     ''')
     conn.commit()
     conn.close()
 
 def add_or_update_user(username, gender, major, preferences):
+    gym = major_to_gym.get(major, "Main Rec")
     conn = sqlite3.connect("users.db")
     c = conn.cursor()
     c.execute("SELECT 1 FROM users WHERE username = ?", (username,))
@@ -40,17 +42,18 @@ def add_or_update_user(username, gender, major, preferences):
 
     if exists:
         c.execute(
-            "UPDATE users SET gender = ?, major = ?, preferences = ? WHERE username = ?",
-            (gender, major, preferences, username)
+            "UPDATE users SET gender = ?, major = ?, preferences = ?, gym = ? WHERE username = ?",
+            (gender, major, preferences, gym, username)
         )
     else:
         c.execute(
-            "INSERT INTO users (username, gender, major, preferences) VALUES (?, ?, ?, ?)",
-            (username, gender, major, preferences)
+            "INSERT INTO users (username, gender, major, preferences, gym) VALUES (?, ?, ?, ?, ?)",
+            (username, gender, major, preferences, gym)
         )
 
     conn.commit()
     conn.close()
+
 
 def get_user_info(username):
     conn = sqlite3.connect("users.db")
@@ -155,6 +158,20 @@ st.title("Exercise Recommender for Aggies")
 
 df, model = load_model_and_data()
 
+major_to_gym = {
+    "Prefer not to say": "Main Rec",
+    "Engineering/CS": "Polo",
+    "Math/Science": "Polo",
+    "Liberal Arts": "Southside",
+    "Humanities": "Southside",
+    "Education": "Southside",
+    "Fine Arts": "Southside",
+    "Business": "Main Rec",
+    "Social Science": "Main Rec",
+    "Health": "Main Rec",
+    "Other": "Main Rec"
+}
+
 # --- Sidebar UI ---
 st.sidebar.header("👤 Create or View User Profile")
 
@@ -170,7 +187,27 @@ for key, default in {
 username_widget = st.sidebar.text_input("Username", value=st.session_state['username'], key="username_widget")
 gender_widget = st.sidebar.selectbox("Gender", ["Prefer not to say", "Male", "Female", "Other"],
                  index=["Prefer not to say", "Male", "Female", "Other"].index(st.session_state['gender']), key="gender_widget")
-major_widget = st.sidebar.text_input("Major", value=st.session_state['major'], key="major_widget")
+major_options = [
+    "Prefer not to say",
+    "Business",
+    "Education",
+    "Engineering/CS",
+    "Fine Arts",
+    "Health",
+    "Humanities",
+    "Liberal Arts",
+    "Math/Science",
+    "Social Science",
+    "Other"
+]
+
+major_widget = st.sidebar.selectbox(
+    "Major",
+    options=major_options,
+    index=major_options.index(st.session_state['major']) if st.session_state['major'] in major_options else 0,
+    key="major_widget"
+)
+
 prefs_widget = st.sidebar.text_area("Exercise Preferences", value=st.session_state['preferences'], key="prefs_widget")
 
 load_col, save_col = st.sidebar.columns(2)
@@ -211,8 +248,15 @@ if st.button("Recommend Exercises"):
         state = {"query": full_query, "df": df, "model": model}
         result_state = workflow.compile().invoke(state)
         results = result_state["results"]
-        
+
+        user_major = st.session_state.get('major', '')
+        user_gym = major_to_gym.get(user_major, "Main Rec")
+        if user_major == "Other" or user_major == "Prefer not to say":
+            st.subheader("🎓 As a general Aggie student, the **Student Rec Center** is the nicest gym on campus, and the perfect place for you to train!")
+        else:
+            st.subheader(f"🎯 As a **{user_major}** major, the **{user_gym} Rec Center** would be the perfect place for you to train!")
         st.subheader("🔥 Top Matches:")
+
         for _, row in results.iterrows():
             st.markdown(f"**{row['Title']}**")
             st.write(row['Desc'])
