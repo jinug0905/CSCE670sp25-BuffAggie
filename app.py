@@ -121,8 +121,8 @@ def transform_query(state):
         # Use the LLM to modify the query to focus on appropriate workouts
         transformed_query = llm.invoke(
             [HumanMessage(content=f"""Given the query '{query}', suggest a workout-related query that avoids the injured body part or focuses on alternative exercises. These queries must be concise, maximum of 10 words and use opposite body part keywords and not include the names of the body parts the user wants to avoid
-    Examples: If Given 'I injured my arms, give me exercises', return 'Give me Quadriceps, Abdominals, Hamstrings, or Calves exercises.'
-    Examples: If Given 'Give me alternates to lower body', return 'Give me Quadriceps, Shoulders, Lats, Biceps, Forearms, or other upper body exercises.'""")]
+    Examples: If Given 'I injured my arms, give me exercises', return 'Give me Quadriceps, Abdominals, Hamstrings, Calves, or other lower body exercises.'
+    Examples: If Given 'Give me alternates to lower body', return 'Give me  upper body exercises.'""")]
         )
         print("Transformed query:", transformed_query.content)
         return {"query": transformed_query.content}  # Extract the content from the response
@@ -236,6 +236,16 @@ with save_col:
 # st.subheader("🔍 Get Exercise Recommendations")
 query = st.text_input("💬 Describe your workout goal (e.g., 'build upper body strength'):")
 
+def generate_summary(exercise_names):
+    """Generate a workout plan summary using the LLM."""
+    summary_prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are an expert at summarizing workout plans. Summarize the following exercises into a concise workout plan which includes sets and reps:"),
+        ("human", "{exercise_names}")
+    ])
+    summary_llm = summary_prompt | llm
+    summary = summary_llm.invoke({"exercise_names": "\n".join(exercise_names)})
+    return summary.content
+
 if st.button("Recommend Exercises"):
     if st.session_state['username'].strip() == "":
         st.warning("Please enter your username in the sidebar to personalize recommendations.")
@@ -243,7 +253,7 @@ if st.button("Recommend Exercises"):
         st.warning("Please enter a workout goal.")
     else:
         user_pref = get_user_preferences(st.session_state['username'])
-        full_query = query if "only" in query.lower() else f"{user_pref} {query}" if user_pref else query
+        full_query = query.replace("only", "").strip() if "only" in query.lower() else f"{user_pref} {query}" if user_pref else query
 
         state = {"query": full_query, "df": df, "model": model}
         result_state = workflow.compile().invoke(state)
@@ -257,8 +267,16 @@ if st.button("Recommend Exercises"):
             st.subheader(f"🎯 As a **{user_major}** major, the **{user_gym} Rec Center** would be the perfect place for you to train!")
         st.subheader("🔥 Top Matches:")
 
+        exercise_names = []
         for _, row in results.iterrows():
             st.markdown(f"**{row['Title']}**")
             st.write(row['Desc'])
             st.caption(f"Similarity Score: {row['similarity']:.2f}")
+            exercise_names.append(row['Title'])
+
+        # Generate and display the workout plan summary
+        if exercise_names:
+            summary = generate_summary(exercise_names)
+            st.subheader("Workout Plan Summary:")
+            st.write(summary)
 
