@@ -82,7 +82,8 @@ def load_model_and_data():
     df['Desc'] = df['Desc'].fillna("")
 
     model = SentenceTransformer('all-MiniLM-L6-v2')
-    df['embeddings'] = df['Desc'].apply(lambda x: model.encode(x))
+    df['combined_text'] = df.apply(lambda row: f"{row['Title']}. {row['Desc']}", axis=1)
+    df['embeddings'] = df['combined_text'].apply(lambda x: model.encode(x))
     return df, model
 
 
