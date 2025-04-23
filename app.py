@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import urllib.parse
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from langgraph.graph import StateGraph, START, END
@@ -48,7 +49,7 @@ def init_db():
 
 # User Profile DB functions
 def add_or_update_user(username, gender, major, preferences):
-    gym = major_to_gym.get(major, "Main Rec")
+    gym = major_to_gym.get(major, "Student")
     conn = sqlite3.connect("users.db")
     c = conn.cursor()
     c.execute("SELECT 1 FROM users WHERE username = ?", (username,))
@@ -255,19 +256,23 @@ st.title("Exercise Recommender for Aggies")
 df, model = load_model_and_data()
 
 major_to_gym = {
-    "Prefer not to say": "Main Rec",
+    "Prefer not to say": "Student",
     "Engineering/CS": "Polo",
     "Math/Science": "Polo",
     "Liberal Arts": "Southside",
     "Humanities": "Southside",
     "Education": "Southside",
     "Fine Arts": "Southside",
-    "Business": "Main Rec",
-    "Social Science": "Main Rec",
-    "Health": "Main Rec",
-    "Other": "Main Rec"
+    "Business": "Student",
+    "Social Science": "Student",
+    "Health": "Student",
+    "Other": "Student"
 }
-
+gym_locations = {
+    "Student": "Student Recreation Center, College Station, TX",
+    "Polo": "Polo Road Student Center, College Station, TX",
+    "Southside": "Southside Rec Center, College Station, TX"
+}
 ### --- Sidebar UI --- ###
 st.sidebar.header("👤 Create or View User Profile")
 
@@ -362,8 +367,8 @@ if st.button("Recommend Exercises"):
         results = result_state["results"]
 
         user_major = st.session_state.get('major', '')
-        user_gym = major_to_gym.get(user_major, "Main Rec")
-        
+        user_gym = major_to_gym.get(user_major, "Student")
+        st.session_state['user_gym'] = user_gym
         # Store results into session state for dropdown display
         st.session_state['location_rec'] = (
             f"🎓 As a general Aggie student, the **Student Rec Center** is the nicest gym on campus, and the perfect place for you to train!"
@@ -440,6 +445,28 @@ else:
 if st.session_state['recommendation_generated']:
     with st.expander("📍 **Recommended Gym Location**", expanded=True):
         st.markdown(st.session_state['location_rec'])
+        user_gym = st.session_state.get('user_gym', 'Student')
+        location = gym_locations[user_gym]
+        encoded_location = urllib.parse.quote(location)
+
+        # Replace with your actual API key
+        api_key = os.getenv("GOOGLE_MAPS_API_KEY", "NO_KEY_FOUND")
+
+        encoded_location = urllib.parse.quote(location)
+
+        # Create the embed URL
+        map_url = f"https://www.google.com/maps/embed/v1/place?key={api_key}&q={encoded_location}"
+
+        # Streamlit UI
+        st.title("📍 Google Maps Location Viewer")
+        st.subheader(f"Showing location: {location}")
+
+        # Display the map
+        st.components.v1.html(
+            f'<iframe width="700" height="500" frameborder="0" style="border:0" '
+            f'src="{map_url}" allowfullscreen></iframe>',
+            height=500
+        )
 
     with st.expander("🔥 **Top Exercise Matches from Query**", expanded=False):
         username = st.session_state.get('username', '').strip()
