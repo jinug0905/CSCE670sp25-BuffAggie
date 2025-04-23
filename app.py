@@ -16,10 +16,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- Database Setup ---
+### --- Database Setup --- ###
 def init_db():
     conn = sqlite3.connect("users.db")
     c = conn.cursor()
+
+    # Users table
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,9 +32,21 @@ def init_db():
             gym TEXT
         )
     ''')
+
+    # Ratings table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ratings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT,
+            exercise TEXT,
+            rating INTEGER CHECK(rating BETWEEN 1 AND 5),
+            UNIQUE(username, exercise)
+        )
+    ''')
     conn.commit()
     conn.close()
 
+# User Profile DB functions
 def add_or_update_user(username, gender, major, preferences):
     gym = major_to_gym.get(major, "Main Rec")
     conn = sqlite3.connect("users.db")
@@ -86,7 +100,6 @@ def load_model_and_data():
     df['embeddings'] = df['combined_text'].apply(lambda x: model.encode(x))
     return df, model
 
-
 def recommend(query, df, model, top_k=5):
     query_vec = model.encode(query)
     all_embeddings = np.vstack(df['embeddings'].values)
@@ -96,7 +109,39 @@ def recommend(query, df, model, top_k=5):
     results['similarity'] = similarities[top_indices]
     return results
 
-# Langgraph Integration
+# User ratings DB functions
+def submit_rating(username, exercise, rating):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute('''
+        INSERT OR REPLACE INTO ratings (username, exercise, rating)
+        VALUES (?, ?, ?)
+    ''', (username, exercise, rating))
+    conn.commit()
+    conn.close()
+
+def get_average_rating(exercise):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute('''
+        SELECT AVG(rating) FROM ratings WHERE exercise = ?
+    ''', (exercise,))
+    avg = c.fetchone()[0]
+    conn.close()
+    return round(avg, 2) if avg else "No ratings yet."
+
+def get_user_rating(username, exercise):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute('''
+        SELECT rating FROM ratings WHERE username = ? AND exercise = ?
+    ''', (username, exercise))
+    result = c.fetchone()
+    conn.close()
+    return result[0] if result else 0
+
+
+### Langgraph Integration ###
 class Intent(BaseModel):
     """Classify user intent."""
     intent: Literal["workout", "avoid_workout"] = Field(..., description="Classify the user query as a good workout query or asking for a workout that is opposite of another / avoids a body part.")
@@ -149,7 +194,59 @@ workflow.add_edge(START, "transform_query")
 workflow.add_edge("transform_query", "recommend_workouts")
 workflow.add_edge("recommend_workouts", END)
 
+
+##############################
+#
+# Recommendation system
+#
+##############################
+
+@st.cache_resource(show_spinner="Generating CF recommendations...")
+def generate_item_item_cf():
+    conn = sqlite3.connect("users.db")
+    ratings_df = pd.read_sql("SELECT username, exercise, rating FROM ratings", conn)
+    conn.close()
+
+    # Pivot table to get item-user rating matrix
+    item_user_matrix = ratings_df.pivot_table(
+        index='exercise',
+        columns='username',
+        values='rating'
+    ).fillna(0)
+
+    # Compute cosine similarity matrix
+    similarity_matrix = cosine_similarity(item_user_matrix)
+    similarity_df = pd.DataFrame(similarity_matrix, 
+                                 index=item_user_matrix.index, 
+                                 columns=item_user_matrix.index)
+    return similarity_df, ratings_df
+
+def recommend_cf_exercises(username, similarity_df, ratings_df, top_n=5):
+    user_ratings = ratings_df[ratings_df['username'] == username]
+    rated_exercises = user_ratings['exercise'].tolist()
+
+    scores = {}
+    for exercise in rated_exercises:
+        rating = user_ratings.loc[user_ratings['exercise'] == exercise, 'rating'].values[0]
+        similar_items = similarity_df[exercise]
+
+        for item, similarity in similar_items.items():
+            if item not in rated_exercises:
+                scores[item] = scores.get(item, 0) + similarity * rating
+
+    recommended_items = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_n]
+    return recommended_items
+
+# Fall back for new users
+def get_popular_exercises(ratings_df, top_n=5):
+    popular = ratings_df.groupby('exercise')['rating'].mean().sort_values(ascending=False).head(top_n)
+    return list(popular.items())
+
+##############################
+#
 # Streamlit App
+#
+##############################
 init_db()
 
 st.set_page_config(page_title="Exercise Recommender", layout="centered")
@@ -171,7 +268,7 @@ major_to_gym = {
     "Other": "Main Rec"
 }
 
-# --- Sidebar UI ---
+### --- Sidebar UI --- ###
 st.sidebar.header("👤 Create or View User Profile")
 
 for key, default in {
@@ -232,6 +329,8 @@ with save_col:
             add_or_update_user(username_widget, gender_widget, major_widget, prefs_widget)
             st.sidebar.success(f"Profile for '{username_widget}' saved or updated!")
 
+
+### --- Page Body --- ###
 # st.subheader("🔍 Get Exercise Recommendations")
 query = st.text_input("💬 Describe your workout goal (e.g., 'build upper body strength'):")
 
@@ -288,14 +387,86 @@ if st.button("Recommend Exercises"):
         st.session_state['recommendation_generated'] = True
         st.rerun()
 
+# Utility function for star rating UI
+def star_rating_widget(key, current_rating):
+    return st.radio(
+        "Your Rating:",
+        ["⭐", "⭐⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"],
+        index=current_rating - 1 if current_rating else None,
+        key=key,
+        horizontal=True
+    )
+
+
+# Recommendation system implementation
+similarity_df, ratings_df = generate_item_item_cf()
+username = st.session_state.get('username', '').strip()
+
+# Function to fetch exercise description
+def get_exercise_description(title, exercise_df):
+    desc_row = exercise_df[exercise_df['Title'] == title]
+    return desc_row['Desc'].values[0] if not desc_row.empty else "No description available."
+
+# Updated CF Recommendation block
+if username:
+    with st.expander("✨ **Recommended Exercises (CF)**", expanded=True):
+        recommended_exercises = recommend_cf_exercises(username, similarity_df, ratings_df)
+
+        if recommended_exercises:
+            for exercise, score in recommended_exercises:
+                avg_rating = get_average_rating(exercise)
+                description = get_exercise_description(exercise, df)
+
+                st.markdown(f"### {exercise}")
+                st.markdown(description)
+                st.caption(f"_Score: {score:.2f} | Global Avg Rating: {avg_rating}_")
+                st.markdown("---")
+        else:
+            st.info("You haven't rated exercises yet, so here are some popular ones to get you started:")
+            popular_exercises = get_popular_exercises(ratings_df, top_n=5)
+            for exercise, avg_rating in popular_exercises:
+                description = get_exercise_description(exercise, df)
+
+                st.markdown(f"### {exercise}")
+                st.markdown(description)
+                st.caption(f"_Global Avg Rating: {avg_rating:.2f}_")
+                st.markdown("---")
+else:
+    with st.expander("✨ **Recommended Exercises (CF)**", expanded=True):
+        st.info("Log in to see personalized recommendations based on your ratings!")
+
+
 # Display dropdowns if a recommendation was generated
 if st.session_state['recommendation_generated']:
     with st.expander("📍 **Recommended Gym Location**", expanded=True):
         st.markdown(st.session_state['location_rec'])
 
-    with st.expander("🔥 **Top Exercise Matches**", expanded=True):
-        for match in st.session_state['top_matches']:
+    with st.expander("🔥 **Top Exercise Matches from Query**", expanded=False):
+        username = st.session_state.get('username', '').strip()
+
+        for i, match in enumerate(st.session_state['top_matches']):
+            exercise_title = match.split('\n')[0].strip("**")
             st.markdown(match)
+
+            col1, col2 = st.columns([1, 2])
+
+            # Display global average rating
+            avg_rating = get_average_rating(exercise_title)
+            col1.write(f"🌎 Global Avg: {avg_rating}")
+
+            # Star rating UI
+            if username:
+                user_current_rating = get_user_rating(username, exercise_title)
+                user_rating = star_rating_widget(f"{exercise_title}_rating_{i}", user_current_rating)
+
+                if st.button(f"Submit rating for '{exercise_title}'", key=f"{exercise_title}_submit_{i}"):
+                    numeric_rating = len(user_rating)
+                    submit_rating(username, exercise_title, numeric_rating)
+                    st.success(f"Your rating of {numeric_rating} stars submitted for '{exercise_title}'!")
+                    st.rerun()
+            else:
+                col2.info("Log in to rate exercises.")
+            
             st.markdown("---")
 
     with st.expander("📋 **Workout Plan Summary**", expanded=True):
