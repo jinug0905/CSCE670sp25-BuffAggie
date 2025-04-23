@@ -54,7 +54,6 @@ def add_or_update_user(username, gender, major, preferences):
     conn.commit()
     conn.close()
 
-
 def get_user_info(username):
     conn = sqlite3.connect("users.db")
     c = conn.cursor()
@@ -150,7 +149,6 @@ workflow.add_edge("transform_query", "recommend_workouts")
 workflow.add_edge("recommend_workouts", END)
 
 # Streamlit App
-
 init_db()
 
 st.set_page_config(page_title="Exercise Recommender", layout="centered")
@@ -245,6 +243,10 @@ def generate_summary(exercise_names):
     summary_llm = summary_prompt | llm
     summary = summary_llm.invoke({"exercise_names": "\n".join(exercise_names)})
     return summary.content
+# Replace your current Streamlit display logic with this snippet
+
+if 'recommendation_generated' not in st.session_state:
+    st.session_state['recommendation_generated'] = False
 
 if st.button("Recommend Exercises"):
     if st.session_state['username'].strip() == "":
@@ -261,22 +263,50 @@ if st.button("Recommend Exercises"):
 
         user_major = st.session_state.get('major', '')
         user_gym = major_to_gym.get(user_major, "Main Rec")
-        if user_major == "Other" or user_major == "Prefer not to say":
-            st.subheader("🎓 As a general Aggie student, the **Student Rec Center** is the nicest gym on campus, and the perfect place for you to train!")
-        else:
-            st.subheader(f"🎯 As a **{user_major}** major, the **{user_gym} Rec Center** would be the perfect place for you to train!")
-        st.subheader("🔥 Top Matches:")
+        
+        # Store results into session state for dropdown display
+        st.session_state['location_rec'] = (
+            f"🎓 As a general Aggie student, the **Student Rec Center** is the nicest gym on campus, and the perfect place for you to train!"
+            if user_major == "Other" or user_major == "Prefer not to say"
+            else f"As a **{user_major}** major, the **{user_gym} Rec Center** would be the perfect place for you to train!"
+        )
 
+        st.session_state['top_matches'] = []
         exercise_names = []
         for _, row in results.iterrows():
-            st.markdown(f"**{row['Title']}**")
-            st.write(row['Desc'])
-            st.caption(f"Similarity Score: {row['similarity']:.2f}")
+            match_text = f"**{row['Title']}**\n\n{row['Desc']}\n\n_Similarity Score: {row['similarity']:.2f}_"
+            st.session_state['top_matches'].append(match_text)
             exercise_names.append(row['Title'])
 
-        # Generate and display the workout plan summary
         if exercise_names:
             summary = generate_summary(exercise_names)
-            st.subheader("Workout Plan Summary:")
-            st.write(summary)
+            st.session_state['workout_summary'] = summary
+        else:
+            st.session_state['workout_summary'] = "No suitable exercises found."
+
+        st.session_state['recommendation_generated'] = True
+        st.rerun()
+
+# Display dropdowns if a recommendation was generated
+if st.session_state['recommendation_generated']:
+    with st.expander("📍 **Recommended Gym Location**", expanded=True):
+        st.markdown(st.session_state['location_rec'])
+
+    with st.expander("🔥 **Top Exercise Matches**", expanded=True):
+        for match in st.session_state['top_matches']:
+            st.markdown(match)
+            st.markdown("---")
+
+    with st.expander("📋 **Workout Plan Summary**", expanded=True):
+        st.markdown(st.session_state['workout_summary'])
+else:
+    # Show empty dropdown placeholders initially
+    with st.expander("📍 **Recommended Gym Location**", expanded=True):
+        st.write("Recommendations will appear here after your query.")
+
+    with st.expander("🔥 **Top Exercise Matches**", expanded=True):
+        st.write("Exercise matches will appear here after your query.")
+
+    with st.expander("📋 **Workout Plan Summary**", expanded=True):
+        st.write("Workout summary will appear here after your query.")
 
